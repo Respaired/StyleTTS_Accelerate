@@ -27,15 +27,19 @@ from utils import *
 from optimizers import build_optimizer
 import time
 
+from accelerate import Accelerator
+from accelerate.utils import LoggerType
+from accelerate import DistributedDataParallelKwargs
+
 from torch.utils.tensorboard import SummaryWriter
 
-# simple fix for dataparallel that allows access to class attributes
-class MyDataParallel(torch.nn.DataParallel):
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.module, name)
+# # simple fix for dataparallel that allows access to class attributes
+# class MyDataParallel(torch.nn.DataParallel):
+#     def __getattr__(self, name):
+#         try:
+#             return super().__getattr__(name)
+#         except AttributeError:
+#             return getattr(self.module, name)
 
 import logging
 from logging import StreamHandler
@@ -54,7 +58,11 @@ def main(config_path):
     log_dir = config['log_dir']
     if not osp.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
     shutil.copy(config_path, osp.join(log_dir, osp.basename(config_path)))
-    writer = SummaryWriter(log_dir + "/tensorboard")
+
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs], mixed_precision='bf16')    
+    if accelerator.is_main_process:
+        writer = SummaryWriter(log_dir + "/tensorboard")
 
     # write logs
     file_handler = logging.FileHandler(osp.join(log_dir, 'train.log'))
@@ -63,7 +71,7 @@ def main(config_path):
     logger.addHandler(file_handler)
 
     batch_size = config.get('batch_size', 10)
-    device = config.get('device', 'cpu')
+    device = accelerator.device
     epochs = config.get('epochs_1st', 200)
     save_freq = config.get('save_freq', 2)
     train_path = config.get('train_data', None)
@@ -87,40 +95,56 @@ def main(config_path):
                                       num_workers=2,
                                       device=device,
                                       dataset_config={})
-    # load pretrained ASR model
-    ASR_config = config.get('ASR_config', False)
-    ASR_path = config.get('ASR_path', False)
-    text_aligner = load_ASR_models(ASR_path, ASR_config)
 
-    # load pretrained F0 model
-    F0_path = config.get('F0_path', False)
-    pitch_extractor = load_F0_models(F0_path)
+    with accelerator.main_process_first():                                      
+      # load pretrained ASR model
+      ASR_config = config.get('ASR_config', False)
+      ASR_path = config.get('ASR_path', False)
+      text_aligner = load_ASR_models(ASR_path, ASR_config)
 
-    scheduler_params = {
-        "max_lr": float(config['optimizer_params'].get('lr', 1e-4)),
-        "pct_start": float(config['optimizer_params'].get('pct_start', 0.0)),
-        "epochs": epochs,
-        "steps_per_epoch": len(train_dataloader),
-    }
+      # load pretrained F0 model
+      F0_path = config.get('F0_path', False)
+      pitch_extractor = load_F0_models(F0_path)
+
+      scheduler_params = {
+          "max_lr": float(config['optimizer_params'].get('lr', 1e-4)),
+          "pct_start": float(config['optimizer_params'].get('pct_start', 0.0)),
+          "epochs": epochs,
+          "steps_per_epoch": len(train_dataloader),
+      }
 
     model = build_model(Munch(config['model_params']), text_aligner, pitch_extractor)
 
+    for k in model:
+        model[k] = accelerator.prepare(model[k])
+
+    train_dataloader, val_dataloader = accelerator.prepare(
+        train_dataloader, val_dataloader
+    )
     _ = [model[key].to(device) for key in model]
 
     optimizer = build_optimizer({key: model[key].parameters() for key in model},
                                       scheduler_params_dict= {key: scheduler_params.copy() for key in model})
 
-    # multi-GPU support
-    if multigpu:
-        for key in model:
-            model[key] = MyDataParallel(model[key])
+    # # multi-GPU support
+    # if multigpu:
+    #     for key in model:
+    #         model[key] = MyDataParallel(model[key])
 
-    if config.get('pretrained_model', '') != '':
-        model, optimizer, start_epoch, iters = load_checkpoint(model,  optimizer, config['pretrained_model'],
-                                    load_only_params=config.get('load_only_params', True))
-    else:
-        start_epoch = 0
-        iters = 0
+    with accelerator.main_process_first():
+        if config.get('pretrained_model', '') != '':
+            model, optimizer, start_epoch, iters = load_checkpoint(model,  optimizer, config['pretrained_model'],
+                                        load_only_params=config.get('load_only_params', True))
+        else:
+            start_epoch = 0
+            iters = 0
+
+
+    try:
+      n_down = model.text_aligner.module.n_down
+
+    except:
+      n_down = model.text_aligner.n_down
 
     best_loss = float('inf')  # best test loss
     loss_train_record = list([])
@@ -141,8 +165,8 @@ def main(config_path):
 
             batch = [b.to(device) for b in batch]
             texts, input_lengths, mels, mel_input_length = batch
-
-            mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')
+            
+            mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
             m = length_to_mask(input_lengths)
 
             text_mask = length_to_mask(input_lengths).to(texts.device)
@@ -182,7 +206,9 @@ def main(config_path):
                 asr = (t_en @ s2s_attn_mono)
 
             # get clips
-            mel_len = int(mel_input_length.min().item() / 2 - 1)
+            mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
+            mel_len = min([int(mel_input_length_all.min().item() / 2 - 1), max_len // 2])
+
             en = []
             gt = []
             for bib in range(len(mel_input_length)):
@@ -215,7 +241,7 @@ def main(config_path):
             out, _ = model.discriminator(mel_rec.detach().unsqueeze(1))
             loss_fake = adv_loss(out, 0)
             d_loss = loss_real + loss_fake + loss_reg * loss_params.lambda_reg
-            d_loss.backward()
+            accelerator.backward(d_loss)
             optimizer.step('discriminator')
 
             # generator loss
@@ -256,8 +282,8 @@ def main(config_path):
                 loss_params.lambda_mono * loss_mono + \
                 loss_params.lambda_s2s * loss_s2s
 
-            running_loss += loss_mel.item()
-            g_loss.backward()
+            running_loss += accelerator.gather(loss_mel).mean().item()
+            accelerator.backward(g_loss)
 
             optimizer.step('text_encoder')
             optimizer.step('style_encoder')
@@ -268,7 +294,7 @@ def main(config_path):
                 optimizer.step('pitch_extractor')
 
             iters = iters + 1
-            if (i+1)%log_interval == 0:
+            if (i+1)%log_interval == 0 and accelerator.is_main_process:
                 logger.info ('Epoch [%d/%d], Step [%d/%d], Mel Loss: %.5f, Adv Loss: %.5f, Disc Loss: %.5f, Mono Loss: %.5f, S2S Loss: %.5f'
                         %(epoch+1, epochs, i+1, len(train_list)//batch_size, running_loss / log_interval, loss_adv.item(), d_loss.item(), loss_mono, loss_s2s))
                 
@@ -327,7 +353,9 @@ def main(config_path):
                 asr = (t_en @ s2s_attn_mono)
 
                 # get clips
-                mel_len = int(mel_input_length.min().item() / 2 - 1)
+                mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
+                mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
+
                 en = []
                 gt = []
                 for bib in range(len(mel_input_length)):
@@ -351,43 +379,45 @@ def main(config_path):
 
                 loss_mel = criterion(mel_rec, gt)
 
-                loss_test += loss_mel
+                loss_test += accelerator.gather(loss_mel).mean().item()
                 iters_test += 1
 
-        print('Epochs:', epoch + 1)
-        logger.info('Validation mel loss: %.3f' % (loss_test / iters_test))
-        print('\n\n\n')
+        if accelerator.is_main_process:
+          print('Epochs:', epoch + 1)
+          logger.info('Validation mel loss: %.3f' % (loss_test / iters_test))
+          print('\n\n\n')
 
-        writer.add_scalar('eval/mel_loss', loss_test / iters_test, epoch + 1)
-        attn_image = get_image(s2s_attn[0].cpu().numpy().squeeze())
-        writer.add_figure('eval/attn', attn_image, epoch)
-        mel_image = get_image(mel_rec[0].cpu().numpy().squeeze())
-        writer.add_figure('eval/mel_rec', mel_image, epoch)
+          writer.add_scalar('eval/mel_loss', loss_test / iters_test, epoch + 1)
+          attn_image = get_image(s2s_attn[0].cpu().numpy().squeeze())
+          writer.add_figure('eval/attn', attn_image, epoch)
+          mel_image = get_image(mel_rec[0].cpu().numpy().squeeze())
+          writer.add_figure('eval/mel_rec', mel_image, epoch)
 
-        if epoch % saving_epoch == 0:
-            if (loss_test / iters_test) < best_loss:
-                best_loss = loss_test / iters_test
-            print('Saving..')
-            state = {
-                'net':  {key: model[key].state_dict() for key in model}, 
-                'optimizer': optimizer.state_dict(),
-                'iters': iters,
-                'val_loss': loss_test / iters_test,
-                'epoch': epoch,
-            }
-            save_path = osp.join(log_dir, 'epoch_1st_%05d.pth' % epoch)
-            torch.save(state, save_path)            
+          if epoch % saving_epoch == 0:
+              if (loss_test / iters_test) < best_loss:
+                  best_loss = loss_test / iters_test
+              print('Saving..')
+              state = {
+                  'net':  {key: model[key].state_dict() for key in model}, 
+                  'optimizer': optimizer.state_dict(),
+                  'iters': iters,
+                  'val_loss': loss_test / iters_test,
+                  'epoch': epoch,
+              }
+              save_path = osp.join(log_dir, 'epoch_1st_%05d.pth' % epoch)
+              torch.save(state, save_path)            
             
-    print('Saving..')
-    state = {
-        'net':  {key: model[key].state_dict() for key in model}, 
-        'optimizer': optimizer.state_dict(),
-        'iters': iters,
-        'val_loss': loss_test / iters_test,
-        'epoch': epoch,
-    }
-    save_path = osp.join(log_dir, config.get('first_stage_path', 'first_stage.pth'))
-    torch.save(state, save_path)
+    if accelerator.is_main_process:
+        print('Saving..')
+        state = {
+            'net':  {key: model[key].state_dict() for key in model}, 
+            'optimizer': optimizer.state_dict(),
+            'iters': iters,
+            'val_loss': loss_test / iters_test,
+            'epoch': epoch,
+        }
+        save_path = osp.join(log_dir, config.get('first_stage_path', 'first_stage.pth'))
+        torch.save(state, save_path)
     
 if __name__=="__main__":
     main()
