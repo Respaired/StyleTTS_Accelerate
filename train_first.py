@@ -125,6 +125,10 @@ def main(config_path):
 
     optimizer = build_optimizer({key: model[key].parameters() for key in model},
                                       scheduler_params_dict= {key: scheduler_params.copy() for key in model})
+    
+    for k, v in optimizer.optimizers.items():
+        optimizer.optimizers[k] = accelerator.prepare(optimizer.optimizers[k])
+        optimizer.schedulers[k] = accelerator.prepare(optimizer.schedulers[k])
 
     # # multi-GPU support
     # if multigpu:
