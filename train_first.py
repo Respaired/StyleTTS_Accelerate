@@ -207,7 +207,7 @@ def main(config_path):
 
             # get clips
             mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
-            mel_len = min([int(mel_input_length_all.min().item() / 2 - 1), max_len // 2])
+            mel_len = int(mel_input_length_all.min().item() / 2 - 1)
 
             en = []
             gt = []
@@ -354,7 +354,7 @@ def main(config_path):
 
                 # get clips
                 mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
-                mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
+                mel_len = int(mel_input_length_all.min().item() / 2 - 1)
 
                 en = []
                 gt = []
