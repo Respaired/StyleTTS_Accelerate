@@ -1,5 +1,5 @@
 log_dir: "Models/LJSpeech"
-first_stage_path: "first_stage.pth"
+first_stage_path: ""
 save_freq: 2
 log_interval: 10
 device: "cuda"
@@ -7,12 +7,12 @@ multigpu: false
 max_len: 400
 epochs_1st: 200 # number of epochs for first stage training
 epochs_2nd: 100 # number of peochs for second stage training
-batch_size: 32
+batch_size: 2
 pretrained_model: ""
 second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
-train_data: "Data/train_list.txt"
+train_data: "Data/val_list.txt"
 val_data: "Data/val_list.txt"
 
 F0_path: "Utils/JDC/bst.t7"
@@ -27,7 +27,7 @@ preprocess_params:
     hop_length: 300
 
 model_params:
-  multi_speaker: True
+  multispeaker: True
   hidden_dim: 512
   n_token: 178
   style_dim: 128
@@ -50,7 +50,9 @@ loss_params:
     TMA_epoch: 20 # TMA starting epoch (1st stage)
 
     # https://github.com/yl4579/StyleTTS/issues/7
-    TMA_CEloss: false # whether to use cross-entropy (CE) loss for TMA - applied in stage 2 anyway
+    # TMA_CEloss: false # whether to use cross-entropy (CE) loss for TMA -
+    # use updated from stts2
+
 
     lambda_F0: 1. # F0 reconstruction loss (2nd stage)
     lambda_norm: 1. # norm reconstruction loss (2nd stage)

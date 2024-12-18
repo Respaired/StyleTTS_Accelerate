@@ -60,7 +60,7 @@ def main(config_path):
     shutil.copy(config_path, osp.join(log_dir, osp.basename(config_path)))
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs], mixed_precision='bf16')    
+    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs])
     if accelerator.is_main_process:
         writer = SummaryWriter(log_dir + "/tensorboard")
 
@@ -169,8 +169,9 @@ def main(config_path):
 
         for i, batch in enumerate(train_dataloader):
 
-            batch = [b.to(device) for b in batch]
-            waves, texts, input_lengths, mels, mel_input_length, _ = batch
+            waves = batch[0]
+            batch = [b.to(device) for b in batch[1:]]
+            texts, input_lengths, mels, mel_input_length, _ = batch
             
             mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
             m = length_to_mask(input_lengths)
@@ -200,6 +201,7 @@ def main(config_path):
 
             # encode
             t_en = model.text_encoder(texts, input_lengths, m)
+            print(f"t_en shape: {t_en.shape}")
 
             # 50% of chance of using monotonic version
             if bool(random.getrandbits(1)):
@@ -322,8 +324,9 @@ def main(config_path):
             for batch_idx, batch in enumerate(val_dataloader):
                 optimizer.zero_grad()
 
-                batch = [b.to(device) for b in batch]
-                waves, texts, input_lengths, mels, mel_input_length, _ = batch
+                waves = batch[0]
+                batch = [b.to(device) for b in batch[1:]]
+                texts, input_lengths, mels, mel_input_length, _ = batch
 
                 with torch.no_grad():
                     mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')

@@ -183,8 +183,9 @@ def main(config_path):
         model.discriminator.train()
         for i, batch in enumerate(train_dataloader):
 
-            batch = [b.to(device) for b in batch]
-            waves, texts, input_lengths, mels, mel_input_length, ref_mels = batch
+            waves = batch[0]
+            batch = [b.to(device) for b in batch[1:]]
+            texts, input_lengths, mels, mel_input_length, ref_mels = batch
 
             with torch.no_grad():
                 mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')
@@ -251,22 +252,22 @@ def main(config_path):
 
                     if multispeaker:
                         s_preds = sampler(noise=torch.randn_like(s_trg).unsqueeze(1).to(device),
-                                          embedding=bert_dur, # TODO: Figure out embeddings# TODO: Figure out embeddings
+                                          embedding=t_en, # TODO: Figure out embeddings
                                           embedding_scale=1,
                                           features=ref,  # reference from the same speaker as the embedding
                                           embedding_mask_proba=0.1,
                                           num_steps=num_steps).squeeze(1)
-                        loss_diff = model.diffusion(s_trg.unsqueeze(1), embedding=bert_dur, # TODO: Figure out embeddings
+                        loss_diff = model.diffusion(s_trg.unsqueeze(1), embedding=t_en, # TODO: Figure out embeddings
                                                     features=ref).mean()  # EDM loss
                         loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
                     else:
                         s_preds = sampler(noise=torch.randn_like(s_trg).unsqueeze(1).to(device),
-                                          embedding=bert_dur, # TODO: Figure out embeddings
+                                          embedding=t_en, # TODO: Figure out embeddings
                                           embedding_scale=1,
                                           embedding_mask_proba=0.1,
                                           num_steps=num_steps).squeeze(1)
                         loss_diff = model.diffusion.module.diffusion(s_trg.unsqueeze(1),
-                                                                     embedding=bert_dur).mean()  # EDM loss TODO: Figure out embeddings
+                                                                     embedding=t_en).mean()  # EDM loss TODO: Figure out embeddings
                         loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
                 else:
                     loss_sty = 0
@@ -468,8 +469,9 @@ def main(config_path):
             for batch_idx, batch in enumerate(val_dataloader):
                 optimizer.zero_grad()
 
-                batch = [b.to(device) for b in batch]
-                waves, texts, input_lengths, mels, mel_input_length, ref_mels = batch
+                waves = batch[0]
+                batch = [b.to(device) for b in batch[1:]]
+                texts, input_lengths, mels, mel_input_length, ref_mels = batch
                 with torch.no_grad():
                     mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')
                     text_mask = length_to_mask(input_lengths).to(texts.device)
@@ -516,6 +518,44 @@ def main(config_path):
                 s = torch.stack(ss).squeeze()
                 gs = torch.stack(gs).squeeze()
                 s_trg = torch.cat([s, gs], dim=-1).detach()
+
+                # compute reference styles
+                if multispeaker and epoch >= diff_epoch:
+                    ref_ss = model.style_encoder(ref_mels.unsqueeze(1))
+                    ref_sp = model.predictor_encoder(ref_mels.unsqueeze(1))
+                    ref = torch.cat([ref_ss, ref_sp], dim=1)
+
+                # denoiser training
+                if epoch >= diff_epoch:
+                    num_steps = np.random.randint(3, 5)
+
+                    if model_params.diffusion.dist.estimate_sigma_data:
+                        model.diffusion.module.diffusion.sigma_data = s_trg.std(
+                            axis=-1).mean().item()  # batch-wise std estimation
+                        running_std.append(model.diffusion.module.diffusion.sigma_data)
+
+                    if multispeaker:
+                        s_preds = sampler(noise=torch.randn_like(s_trg).unsqueeze(1).to(device),
+                                          embedding=t_en,  # TODO: Figure out embeddings
+                                          embedding_scale=1,
+                                          features=ref,  # reference from the same speaker as the embedding
+                                          embedding_mask_proba=0.1,
+                                          num_steps=num_steps).squeeze(1)
+                        loss_diff = model.diffusion(s_trg.unsqueeze(1), embedding=t_en,  # TODO: Figure out embeddings
+                                                    features=ref).mean()  # EDM loss
+                        loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
+                    else:
+                        s_preds = sampler(noise=torch.randn_like(s_trg).unsqueeze(1).to(device),
+                                          embedding=t_en,  # TODO: Figure out embeddings
+                                          embedding_scale=1,
+                                          embedding_mask_proba=0.1,
+                                          num_steps=num_steps).squeeze(1)
+                        loss_diff = model.diffusion.module.diffusion(s_trg.unsqueeze(1),
+                                                                     embedding=t_en).mean()  # EDM loss TODO: Figure out embeddings
+                        loss_sty = F.l1_loss(s_preds, s_trg.detach())  # style reconstruction loss
+                else:
+                    loss_sty = 0
+                    loss_diff = 0
 
                 d, p = model.predictor(t_en, s,
                                        input_lengths,
