@@ -4,6 +4,8 @@ from monotonic_align.core import maximum_path_c
 import numpy as np
 import torch
 import copy
+
+from munch import Munch
 from torch import nn
 import torch.nn.functional as F
 import torchaudio
@@ -81,3 +83,12 @@ def get_image(arrs):
     ax.imshow(arrs)
 
     return fig
+
+
+def recursive_munch(d):
+    if isinstance(d, dict):
+        return Munch((k, recursive_munch(v)) for k, v in d.items())
+    elif isinstance(d, list):
+        return [recursive_munch(v) for v in d]
+    else:
+        return d

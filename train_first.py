@@ -113,7 +113,10 @@ def main(config_path):
           "steps_per_epoch": len(train_dataloader),
       }
 
-    model = build_model(Munch(config['model_params']), text_aligner, pitch_extractor)
+    model_params = recursive_munch(config['model_params'])
+    multispeaker = model_params.multispeaker
+    model = build_model(model_params, text_aligner, pitch_extractor)
+    max_len = config.get('max_len', 200)
 
     for k in model:
         model[k] = accelerator.prepare(model[k])
@@ -156,7 +159,6 @@ def main(config_path):
 
     loss_params = Munch(config['loss_params'])
     TMA_epoch = loss_params.TMA_epoch
-    TMA_CEloss = loss_params.TMA_CEloss
 
     for epoch in range(start_epoch, epochs):
         running_loss = 0
@@ -168,17 +170,17 @@ def main(config_path):
         for i, batch in enumerate(train_dataloader):
 
             batch = [b.to(device) for b in batch]
-            texts, input_lengths, mels, mel_input_length = batch
+            waves, texts, input_lengths, mels, mel_input_length, _ = batch
             
             mask = length_to_mask(mel_input_length // (2 ** n_down)).to('cuda')
             m = length_to_mask(input_lengths)
 
             text_mask = length_to_mask(input_lengths).to(texts.device)
-            ppgs, s2s_pred, s2s_attn_feat = model.text_aligner(mels, mask, texts)
+            ppgs, s2s_pred, s2s_attn = model.text_aligner(mels, mask, texts)
 
-            s2s_attn_feat = s2s_attn_feat.transpose(-1, -2)
-            s2s_attn_feat = s2s_attn_feat[..., 1:]
-            s2s_attn_feat = s2s_attn_feat.transpose(-1, -2)
+            s2s_attn = s2s_attn.transpose(-1, -2)
+            s2s_attn = s2s_attn[..., 1:]
+            s2s_attn = s2s_attn.transpose(-1, -2)
             
             with torch.no_grad():
                 text_mask = length_to_mask(input_lengths).to(texts.device)
@@ -186,12 +188,8 @@ def main(config_path):
                 attn_mask = attn_mask.float() * (~text_mask).unsqueeze(-1).expand(text_mask.shape[0], text_mask.shape[1], mask.shape[-1]).float()
                 attn_mask = (attn_mask < 1)
                 
-            s2s_attn_feat.masked_fill_(attn_mask, -float("inf"))
-            
-            if TMA_CEloss:
-                s2s_attn = F.softmax(s2s_attn_feat, dim=1) # along the mel dimension
-            else:
-                s2s_attn = F.softmax(s2s_attn_feat, dim=-1) # along the text dimension
+            s2s_attn.masked_fill_(attn_mask, -float("inf"))
+
 
             # get monotonic version 
             with torch.no_grad():
@@ -211,19 +209,27 @@ def main(config_path):
 
             # get clips
             mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
-            mel_len = int(mel_input_length_all.min().item() / 2 - 1)
+            mel_len = min([int(mel_input_length_all.min().item() / 2 - 1), max_len // 2])
+            mel_len_st = int(mel_input_length.min().item() / 2 - 1)
 
             en = []
             gt = []
+            st = [] # STTS2
+
             for bib in range(len(mel_input_length)):
                 mel_length = int(mel_input_length[bib].item() / 2)
 
                 random_start = np.random.randint(0, mel_length - mel_len)
-                en.append(asr[bib, :, random_start:random_start+mel_len])
-                gt.append(mels[bib, :, (random_start * 2):((random_start+mel_len) * 2)])
+                en.append(asr[bib, :, random_start:random_start + mel_len])
+                gt.append(mels[bib, :, (random_start * 2):((random_start + mel_len) * 2)])
+
+                # style reference (better to be different from the GT)
+                random_start = np.random.randint(0, mel_length - mel_len_st)
+                st.append(mels[bib, :, (random_start * 2):((random_start + mel_len_st) * 2)])
 
             en = torch.stack(en)
             gt = torch.stack(gt).detach()
+            st = torch.stack(st).detach()
 
             # clip too short to be used by the style encoder
             if gt.shape[-1] < 80:
@@ -231,6 +237,7 @@ def main(config_path):
 
             real_norm = log_norm(gt.unsqueeze(1)).squeeze(1).detach()
             F0_real, _, _ = model.pitch_extractor(gt.unsqueeze(1))
+
             s = model.style_encoder(gt.unsqueeze(1))
 
             # reconstruction
@@ -257,14 +264,9 @@ def main(config_path):
                 for _s2s_pred, _text_input, _text_length in zip(s2s_pred, texts, input_lengths):
                     loss_s2s += F.cross_entropy(_s2s_pred[:_text_length], _text_input[:_text_length])
                 loss_s2s /= texts.size(0)
-                
-                if TMA_CEloss:
-                    # cross entropy loss for monotonic alignment
-                    log_attn = torch.nan_to_num(F.log_softmax(s2s_attn_feat, dim=1)) # along the mel dimension
-                    loss_mono = -(torch.mul(log_attn, s2s_attn_mono).sum(axis=[-1, -2]) / input_lengths).mean()
-                else:
-                    # L1 loss for monotonic alignment
-                    loss_mono = F.l1_loss(s2s_attn, s2s_attn_mono) * 10
+
+                # L1 loss for monotonic alignment
+                loss_mono = F.l1_loss(s2s_attn, s2s_attn_mono) * 10
             else:
                 loss_s2s = 0
                 loss_mono = 0
@@ -321,16 +323,16 @@ def main(config_path):
                 optimizer.zero_grad()
 
                 batch = [b.to(device) for b in batch]
-                texts, input_lengths, mels, mel_input_length = batch
+                waves, texts, input_lengths, mels, mel_input_length, _ = batch
 
                 with torch.no_grad():
                     mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')
                     m = length_to_mask(input_lengths)
-                    ppgs, s2s_pred, s2s_attn_feat = model.text_aligner(mels, mask, texts)
+                    ppgs, s2s_pred, s2s_attn = model.text_aligner(mels, mask, texts)
 
-                    s2s_attn_feat = s2s_attn_feat.transpose(-1, -2)
-                    s2s_attn_feat = s2s_attn_feat[..., 1:]
-                    s2s_attn_feat = s2s_attn_feat.transpose(-1, -2)
+                    s2s_attn = s2s_attn.transpose(-1, -2)
+                    s2s_attn = s2s_attn[..., 1:]
+                    s2s_attn = s2s_attn.transpose(-1, -2)
 
                     with torch.no_grad():
                         text_mask = length_to_mask(input_lengths).to(texts.device)
@@ -338,12 +340,7 @@ def main(config_path):
                         attn_mask = attn_mask.float() * (~text_mask).unsqueeze(-1).expand(text_mask.shape[0], text_mask.shape[1], mask.shape[-1]).float()
                         attn_mask = (attn_mask < 1)
 
-                    s2s_attn_feat.masked_fill_(attn_mask, -float("inf"))
-
-                    if TMA_CEloss:
-                        s2s_attn = F.softmax(s2s_attn_feat, dim=1) # along the mel dimension
-                    else:
-                        s2s_attn = F.softmax(s2s_attn_feat, dim=-1) # along the text dimension
+                    s2s_attn.masked_fill_(attn_mask, -float("inf"))
 
                     # get monotonic version 
                     with torch.no_grad():
@@ -357,8 +354,8 @@ def main(config_path):
                 asr = (t_en @ s2s_attn_mono)
 
                 # get clips
-                mel_input_length_all = accelerator.gather(mel_input_length) # for balanced load
-                mel_len = int(mel_input_length_all.min().item() / 2 - 1)
+                mel_input_length_all = accelerator.gather(mel_input_length)  # for balanced load
+                mel_len = min([int(mel_input_length.min().item() / 2 - 1), max_len // 2])
 
                 en = []
                 gt = []
@@ -368,6 +365,7 @@ def main(config_path):
                     random_start = np.random.randint(0, mel_length - mel_len)
                     en.append(asr[bib, :, random_start:random_start+mel_len])
                     gt.append(mels[bib, :, (random_start * 2):((random_start+mel_len) * 2)])
+
                 en = torch.stack(en)
                 gt = torch.stack(gt).detach()
 
