@@ -12,7 +12,7 @@ pretrained_model: ""
 second_stage_load_pretrained: false # set to true if the pre-trained model is for 2nd stage
 load_only_params: false # set to true if do not want to load epoch numbers and optimizer parameters
 
-train_data: "Data/val_list.txt"
+train_data: "Data/train_list.txt"
 val_data: "Data/val_list.txt"
 
 F0_path: "Utils/JDC/bst.t7"
@@ -36,6 +36,24 @@ model_params:
   max_conv_dim: 512
   n_mels: 80
   dropout: 0.2
+
+  # style diffusion model config
+  diffusion:
+    diff_embedding_max_length: 768
+    embedding_mask_proba: 0.1
+    # transformer config
+    transformer:
+      num_layers: 3
+      num_heads: 8
+      head_features: 64
+      multiplier: 2
+
+    # diffusion distribution config
+    dist:
+      sigma_data: 0.2 # placeholder for estimate_sigma_data set to false
+      estimate_sigma_data: true # estimate sigma_data from the current batch if set to true
+      mean: -3.0
+      std: 1.0
 
 loss_params:
     diff_epoch: 5
