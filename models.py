@@ -717,18 +717,18 @@ def build_model(args, text_aligner, pitch_extractor):
     # define diffusion model
     if args.multispeaker:
         transformer = StyleTransformer1d(channels=args.style_dim * 2,
-                                         context_embedding_features=bert.config.hidden_size, # TODO: Figure out embeddings
+                                         context_embedding_features=args.hidden_dim, # TODO: Figure out embeddings
                                          context_features=args.style_dim * 2,
                                          **args.diffusion.transformer)
     else:
         transformer = Transformer1d(channels=args.style_dim * 2,
-                                    context_embedding_features=bert.config.hidden_size, # TODO: Figure out embeddings
+                                    context_embedding_features=args.hidden_dim, # TODO: Figure out embeddings
                                     **args.diffusion.transformer)
 
     diffusion = AudioDiffusionConditional(
         in_channels=1,
-        embedding_max_length=bert.config.max_position_embeddings, # TODO: Figure out embeddings
-        embedding_features=bert.config.hidden_size, # TODO: Figure out embeddings
+        embedding_max_length=args.diffusion.diff_embedding_max_length, # TODO: Figure out embeddings
+        embedding_features=args.hidden_dim, # TODO: Figure out embeddings
         embedding_mask_proba=args.diffusion.embedding_mask_proba,  # Conditional dropout of batch elements,
         channels=args.style_dim * 2,
         context_features=args.style_dim * 2,

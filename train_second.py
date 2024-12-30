@@ -95,18 +95,21 @@ def main(config_path):
     # load data
     train_list, val_list = get_data_path_list(train_path, val_path)
 
+    rootpath = get_parent_directory(config_path, train_path)
+
     train_dataloader = build_dataloader(train_list,
                                         batch_size=batch_size,
                                         num_workers=8,
-                                        dataset_config={},
-                                        device=device)
+                                        dataset_config={"rootpath": rootpath},
+                                        device=device, )
 
+    rootpath = get_parent_directory(config_path, val_path)
     val_dataloader = build_dataloader(val_list,
                                       batch_size=batch_size,
                                       validation=True,
                                       num_workers=2,
                                       device=device,
-                                      dataset_config={})
+                                      dataset_config={"rootpath": rootpath})
     # load pretrained ASR model
     ASR_config = config.get('ASR_config', False)
     ASR_path = config.get('ASR_path', False)
@@ -185,7 +188,7 @@ def main(config_path):
 
             waves = batch[0]
             batch = [b.to(device) for b in batch[1:]]
-            texts, input_lengths, mels, mel_input_length, ref_mels = batch
+            texts, input_lengths, mels, mel_input_length, ref_mels = batch # TODO: MARKED CHANGE
 
             with torch.no_grad():
                 mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')

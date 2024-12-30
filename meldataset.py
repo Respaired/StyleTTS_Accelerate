@@ -73,6 +73,7 @@ class FilePathDataset(torch.utils.data.Dataset):
                  sr=24000,
                  data_augmentation=False,
                  validation=False,
+                 rootpath="",
                  ):
 
         spect_params = SPECT_PARAMS
@@ -90,6 +91,8 @@ class FilePathDataset(torch.utils.data.Dataset):
         self.max_mel_length = 192
 
         self.df = pd.DataFrame(self.data_list)
+
+        self.rootpath = rootpath
         
 #         self.global_phonemizer = phonemizer.backend.EspeakBackend(language='en-us', preserve_punctuation=True,  with_stress=True)
 
@@ -117,12 +120,13 @@ class FilePathDataset(torch.utils.data.Dataset):
     def _load_tensor(self, data):
         wave_path, text, speaker_id = data
         speaker_id = int(speaker_id)
-        wave, sr = sf.read(wave_path)
+        wave, sr = librosa.load(os.path.join(self.rootpath, wave_path), sr=self.sr)
+        wave = (wave * 32767).astype(np.int16)
         if wave.shape[-1] == 2:
             wave = wave[:, 0].squeeze()
         if sr != 24000:
             wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
-            print(wave_path, sr)
+
             
         wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
         
