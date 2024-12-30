@@ -1,9 +1,13 @@
+import os
+
 from monotonic_align import maximum_path
 from monotonic_align import mask_from_lens
 from monotonic_align.core import maximum_path_c
 import numpy as np
 import torch
 import copy
+
+from munch import Munch
 from torch import nn
 import torch.nn.functional as F
 import torchaudio
@@ -81,3 +85,33 @@ def get_image(arrs):
     ax.imshow(arrs)
 
     return fig
+
+
+def get_parent_directory(config_path, text_file_path):  # TODO: MARKED CHANGE
+    """
+    Get the parent directory of the text file, handling both relative and absolute paths.
+
+    Args:
+        config_path: Path to the config.yaml file
+        text_file_path: Path to the text file (can be relative or absolute)
+
+    Returns:
+        str: Absolute path to the parent directory of the text file
+    """
+    # If the text file path is absolute, use it directly
+    if os.path.isabs(text_file_path):
+        absolute_text_path = text_file_path
+    else:
+        # If relative, make it absolute by joining with config directory
+        absolute_text_path = text_file_path
+
+    # Get the parent directory
+    return os.path.abspath(os.path.dirname(absolute_text_path))
+
+def recursive_munch(d):
+    if isinstance(d, dict):
+        return Munch((k, recursive_munch(v)) for k, v in d.items())
+    elif isinstance(d, list):
+        return [recursive_munch(v) for v in d]
+    else:
+        return d

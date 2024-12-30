@@ -12039,7 +12039,6 @@ LJSpeech-1.1/wavs/LJ003-0333.wav|bˌʌt hˈɪɹ ðə ɹˌɛkəmɛndˈeɪʃənz t
 LJSpeech-1.1/wavs/LJ037-0082.wav|ɔnðɪ ˈiːvnɪŋ ʌv noʊvˈɛmbɚ twˈɛnti tˈuː ,|0
 LJSpeech-1.1/wavs/LJ050-0149.wav|pˌiːˌɑːɹɹˈɛs mˈʌst dɪvˈɛləp ðə kəpˈæsɪɾi tə klˈæsᵻfˌaɪ ɪts sˈʌbdʒɛkts ˌɔn ɐ mˈoːɹ səfˈɪstᵻkˌeɪɾᵻd bˈeɪsɪs ðɐn ðə pɹˈɛzənt dʒˌɪəɡɹˈæfɪk bɹˈeɪkdaʊn .|0
 LJSpeech-1.1/wavs/LJ042-0079.wav|maɪ ɹᵻkwˈɛst fɔːɹ sˈɪɾɪzənʃˌɪp ɪz nˈaʊ pˈɛndɪŋ bᵻfˌoːɹ ðə suːpɹˈiːm sˈoʊviət ʌvðə jˈuː.ˈɛs.ˈɛs.ˈɑːɹ . aɪ tˈeɪk ðiːz stˈɛps fɔːɹ pəlˈɪɾɪkəl ɹˈiːzənz .|0
-LJSpeech-1.1/wavs/LJ002-0194.wav|ænd ɐ hˈɛvi fˈiː æt ðə ɹˈeɪt ʌv ˈeɪt pˈaʊndz pɜː wˈʌn hˈʌndɹɪd pˈaʊndz , wɪð fˈoːɹ pˈaʊndz fɔːɹ ˈɛvɹi ɐdˈɪʃənəl hˈʌndɹɪd .|0
 LJSpeech-1.1/wavs/LJ005-0064.wav|ɪz fˈaʊnd nˈaʊ ɐ dˈeɪz təbi ɹˈiəli ˌɛfɪkˈeɪʃəs . ðə mˈeɪn ɹˌɛkəmɛndˈeɪʃənz , haʊˈɛvɚ , ɑːɹ bˈeɪst əpˌɑːŋ kˈɑːmən sˈɛns|0
 LJSpeech-1.1/wavs/LJ005-0118.wav|ɪn mˈɛni ˈʌðɚz ðɛɹwˌɜː nˈoʊ ɪnfˈɜːmɚɹiz , nˈoʊ plˈeɪsᵻz sˈɛt ɐpˈɑːɹt fɚðə kənfˈaɪnmənt ʌv pɹˈɪzənɚz ɐflˈɪktᵻd wɪð dˈeɪndʒɚɹəs ænd ɪnfˈɛkʃəs dɪsˈoːɹdɚz .|0
 LJSpeech-1.1/wavs/LJ024-0089.wav|lˈɛt ˌʌs ɛɡzˈæmɪn ðə pɹˈɑːsɛs .|0
