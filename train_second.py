@@ -188,7 +188,7 @@ def main(config_path):
 
             waves = batch[0]
             batch = [b.to(device) for b in batch[1:]]
-            texts, input_lengths, mels, mel_input_length, ref_mels = batch
+            texts, input_lengths, mels, mel_input_length, ref_mels = batch # TODO: MARKED CHANGE
 
             with torch.no_grad():
                 mask = length_to_mask(mel_input_length // (2 ** model.text_aligner.n_down)).to('cuda')

@@ -87,7 +87,7 @@ def get_image(arrs):
     return fig
 
 
-def get_parent_directory(config_path, text_file_path):
+def get_parent_directory(config_path, text_file_path):  # TODO: MARKED CHANGE
     """
     Get the parent directory of the text file, handling both relative and absolute paths.
 
