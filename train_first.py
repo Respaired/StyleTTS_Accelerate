@@ -508,7 +508,7 @@ def main(config_path):
     save_freq = config.get('save_freq', 2)
     train_path = config.get('train_data', None)
     val_path = config.get('val_data', None)
-    hf_token = config.get('hf_token', "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")
+    hf_token = config.get('hf_token', None)
     multigpu = config.get('multigpu', False)
     log_interval = config.get('log_interval', 10)
     saving_epoch = config.get('save_freq', 2)
